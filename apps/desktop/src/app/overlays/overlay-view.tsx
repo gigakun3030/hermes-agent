@@ -1,5 +1,6 @@
-import { type ReactNode, useEffect } from 'react'
+import { type CSSProperties, type ReactNode, useEffect } from 'react'
 
+import { TITLEBAR_HEIGHT } from '@/app/shell/titlebar'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { translateNow } from '@/i18n'
@@ -64,6 +65,12 @@ export function OverlayView({
         }
       }}
       role="presentation"
+      // Window-level chrome: overlays always clear the real titlebar. The
+      // contrib shell zeroes --titlebar-height for CONTENT areas (panes sit
+      // below its in-flow title bar), and CSS vars inherit through the DOM —
+      // so a fixed overlay mounted inside a zone would read 0 and bleed to
+      // the edges. Re-pin the real height at the overlay root.
+      style={{ '--titlebar-height': `${TITLEBAR_HEIGHT}px` } as CSSProperties}
     >
       <div
         className={cn(
