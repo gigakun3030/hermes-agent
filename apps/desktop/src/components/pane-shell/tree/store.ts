@@ -7,7 +7,9 @@
 import { atom } from 'nanostores'
 
 import { SIDEBAR_COLLAPSE_MEDIA_QUERY } from '@/app/layout-constants'
+import { setPluginEnabled } from '@/contrib/plugins-store'
 import { registry } from '@/contrib/registry'
+import { notify } from '@/store/notifications'
 import { clearAllPaneSizeOverrides } from '@/store/panes'
 
 import {
@@ -215,6 +217,25 @@ export function closeTreePane(paneId: string) {
 
   if (closer) {
     closer()
+
+    return
+  }
+
+  // A plugin's pane: Close = DISABLE the plugin — the same switch as
+  // Settings → Plugins, so recovery is discoverable and symmetric. The
+  // contribution unregisters but the pane id STAYS in the tree, so
+  // re-enabling restores it exactly where it was. (Dismissal + removal
+  // would strand the pane with no way back short of a layout reset.)
+  const source = registry.getArea('panes').find(c => c.id === paneId)?.source
+
+  if (source?.startsWith('plugin:')) {
+    const pluginId = source.slice('plugin:'.length)
+    void setPluginEnabled(pluginId, false)
+    notify({
+      kind: 'info',
+      title: `Plugin "${pluginId}" disabled`,
+      message: 'Re-enable it in Settings → Plugins to bring the pane back.'
+    })
 
     return
   }
@@ -448,6 +469,16 @@ function adoptContributedPanes(): void {
   const placementOf = (paneId: string) => dataOf(paneId)?.placement
   const mainId = panes.find(c => placementOf(c.id) === 'main')?.id
   const inTree = new Set(allPaneIds(tree))
+
+  // Plugin panes are never dismissed anymore (Close disables the plugin
+  // instead) — drop stale entries so panes stranded by the old behavior
+  // re-adopt on their own.
+  for (const pane of panes) {
+    if (pane.source?.startsWith('plugin:') && $dismissedPanes.get().has(pane.id)) {
+      setDismissed(pane.id, false)
+    }
+  }
+
   const dismissed = $dismissedPanes.get()
   const missing = panes.filter(c => !inTree.has(c.id) && !dismissed.has(c.id))
 
