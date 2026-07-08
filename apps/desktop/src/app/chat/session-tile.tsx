@@ -15,7 +15,7 @@
  */
 
 import { useStore } from '@nanostores/react'
-import { computed } from 'nanostores'
+import { atom, computed } from 'nanostores'
 import { useEffect, useMemo, useRef } from 'react'
 
 import { useGatewayRequest } from '@/app/gateway/hooks/use-gateway-request'
@@ -70,7 +70,8 @@ function buildTileView(storedSessionId: string): SessionView {
     $model: computed($state, state => state?.model ?? ''),
     $provider: computed($state, state => state?.provider ?? ''),
     $runtimeId,
-    $storedId: computed($sessionTiles, () => storedSessionId)
+    // Constant for the tile's lifetime — a plain atom, not a computed.
+    $storedId: atom(storedSessionId)
   }
 }
 
