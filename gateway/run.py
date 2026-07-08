@@ -353,6 +353,14 @@ def _redact_approval_command(cmd: "str | None") -> str:
 
 def _gateway_provider_error_reply(text: str) -> str:
     """Map raw provider/API errors to a short user-safe Telegram reply."""
+    # Model-not-found must be checked BEFORE the generic 401/403 auth
+    # catch-all — some providers (OpenCode Zen) misuse HTTP 401 for
+    # "model not supported" errors whose body carries "is not supported".
+    if re.search(r"(model\s+\S+\s+is\s+not\s+supported|is\s+not\s+a\s+supported\s+model)", text, re.IGNORECASE):
+        return (
+            "⚠️ This model is not supported by the provider. "
+            "Try a different free model from the provider's available list."
+        )
     if _GATEWAY_AUTH_ERROR_RE.search(text):
         return (
             "⚠️ Provider authentication failed. Check the configured credentials; "
@@ -1933,6 +1941,15 @@ def _event_media_is_image(event, index: int) -> bool:
     content part, and the provider 400s ("Could not process image").
     """
     mtype = _event_media_type_at(event, index)
+    path = ""
+    urls = getattr(event, "media_urls", None) or []
+    if index < len(urls):
+        path = urls[index] or ""
+
+    # Treat GIFs as non-image media
+    if mtype == "image/gif" or path.lower().endswith(".gif"):
+        return False
+
     if mtype:
         return mtype.startswith("image/")
     return getattr(event, "message_type", None) == MessageType.PHOTO
@@ -1949,6 +1966,15 @@ def _event_media_is_audio(event, index: int) -> bool:
 def _event_media_is_video(event, index: int) -> bool:
     """True if the attachment at *index* is video (per-attachment MIME first)."""
     mtype = _event_media_type_at(event, index)
+    path = ""
+    urls = getattr(event, "media_urls", None) or []
+    if index < len(urls):
+        path = urls[index] or ""
+
+    # Treat GIFs as video-like media
+    if mtype == "image/gif" or path.lower().endswith(".gif"):
+        return True
+
     if mtype:
         return mtype.startswith("video/")
     return getattr(event, "message_type", None) == MessageType.VIDEO
@@ -10147,7 +10173,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     and event.message_type not in {MessageType.AUDIO, MessageType.DOCUMENT}
                 ):
                     audio_paths.append(path)
-                if mtype.startswith("video/") or (not mtype and event.message_type == MessageType.VIDEO):
+                if _event_media_is_video(event, i):
                     video_paths.append(path)
 
             if image_paths:
