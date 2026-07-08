@@ -17,6 +17,35 @@ Usage::
     hermes -p coder chat                 # or via flag
     hermes profile use coder             # set as sticky default
     hermes profile delete coder          # remove profile + alias + service
+
+Multiplexing (Serving Multiple Profiles From One Gateway)
+==========================================================
+
+When ``gateway.multiplex_profiles: true`` is set in the default profile's
+``config.yaml``, a single gateway process can serve multiple profiles
+simultaneously.  Each profile keeps its own config, credentials, skills,
+and session history — isolated behind per-profile ``HERMES_HOME`` scoping.
+
+Recommended setup for two profiles (e.g. ``default`` + ``companion``):
+
+1. **Default profile** owns the HTTP listener (webhook, API server) and
+   any port-binding platforms.  It can also connect to messaging platforms
+   (Telegram, Discord, Slack) with its own credentials.
+2. **Secondary profiles** must NOT enable port-binding platforms (webhook,
+   HTTP API server).  They may only connect messaging platforms (Telegram,
+   Discord, etc.) *with their own unique credentials*.
+3. **Each profile must have its own ``.env``** with the required API keys
+   for the platforms it enables.  Two profiles polling the same bot token
+   will be detected and refused at runtime.
+4. **Quick commands should be profile-scoped.**  A command running under a
+   secondary profile should not ``hermes -p default send`` to the default
+   profile's channels — it should only send to its own profile's channels.
+   The new ``commands.custom`` config section (config version 34+) adds
+   per-platform visibility controls to help with this.
+
+The gateway logs a warning at startup if two profiles enable overlapping
+platforms (potential credential collision).  Use ``hermes logs -n 30``
+to check for these warnings.
 """
 
 import json
@@ -965,7 +994,70 @@ def profiles_to_serve(multiplex: bool) -> List[Tuple[str, Path]]:
                 continue
             serve.append((name, entry))
 
+    # Early-warning validation: log platform overlap warnings so they
+    # surface in gateway startup logs (``hermes logs -n 30``).
+    coll_warnings = validate_multiplex_config(serve)
+    if coll_warnings:
+        import logging
+        _log = logging.getLogger(__name__)
+        for w in coll_warnings:
+            _log.warning("multiplex config: %s", w)
+
     return serve
+
+
+def validate_multiplex_config(served: List[Tuple[str, Path]]) -> List[str]:
+    """Check for platform credential collisions across multiplexed profiles.
+
+    When multiple profiles are served by a single gateway, no two profiles
+    should enable the same platform with identical credentials (a single bot
+    token can only be polled once).  This function scans each profile's
+    config.yaml to detect potential collisions and returns a list of warning
+    messages.
+
+    The gateway's adapter layer already catches the real collision at runtime
+    via credential fingerprinting (see ``_start_one_profile_adapters`` in
+    gateway/run.py).  This is an early-warning check that surfaces the
+    problem earlier, in CLI commands like ``hermes profile list``.
+    """
+    warnings: List[str] = []
+    if len(served) < 2:
+        return warnings
+
+    # Load each profile's enabled platforms
+    profile_platforms: Dict[str, List[str]] = {}
+    for name, home in served:
+        cfg_path = home / "config.yaml"
+        if not cfg_path.exists():
+            continue
+        try:
+            raw = cfg_path.read_text()
+            import yaml
+            cfg = yaml.safe_load(raw) or {}
+        except Exception:
+            continue
+        plat_cfg = cfg.get("platforms", {}) or {}
+        enabled = [
+            p for p, c in plat_cfg.items()
+            if isinstance(c, dict) and c.get("enabled")
+        ]
+        profile_platforms[name] = enabled
+
+    # Detect overlaps
+    names = list(profile_platforms.keys())
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            a, b = names[i], names[j]
+            overlap = set(profile_platforms[a]) & set(profile_platforms[b])
+            if overlap:
+                warnings.append(
+                    "Profile collision: both '%s' and '%s' enable the same "
+                    "platform(s): %s — if they share a credential, the "
+                    "duplicate will be refused at gateway startup." %
+                    (a, b, ", ".join(sorted(overlap)))
+                )
+
+    return warnings
 
 
 def create_profile(

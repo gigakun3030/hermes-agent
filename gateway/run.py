@@ -8286,6 +8286,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         for platform, platform_config in profile_cfg.platforms.items():
             if not platform_config.enabled:
                 continue
+            # Credential guard: a secondary profile must have a .env file to
+            # connect any credential-dependent platform. Log a clear warning
+            # and skip rather than letting the adapter fail cryptically later.
+            cred_file = profile_home / ".env"
+            if not cred_file.exists():
+                logger.warning(
+                    "Profile '%s' has %s enabled but no .env — skipping "
+                    "(create the profile's .env with the required credentials)",
+                    profile_name, platform.value,
+                )
+                continue
             # A secondary profile must NOT enable a port-binding platform: the
             # default profile's listener already serves every profile via the
             # /p/<profile>/ prefix, so a second bind can only collide. This is a
