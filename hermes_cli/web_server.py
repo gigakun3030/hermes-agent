@@ -2886,6 +2886,42 @@ def _dashboard_spawn_executable() -> str:
     return exe
 
 
+def _run_gateway_cli_sync(
+    subcommand: List[str],
+    env_opts: Optional[Dict[str, str]] = None,
+    timeout: int = 60,
+) -> Tuple[int, str]:
+    """Run a ``hermes <subcommand>`` synchronously and return ``(rc, output)``.
+
+    Unlike ``_spawn_hermes_action`` (fire-and-forget), this waits for
+    completion so callers get real exit codes and error messages.
+
+    ``env_opts`` can contain ``{"_strip": "ENV_VAR_NAME"}`` to remove an
+    inherited env var from the child process (e.g. ``_HERMES_GATEWAY``
+    which would block ``gateway stop``).
+    """
+    cmd = [_dashboard_spawn_executable(), "-m", "hermes_cli.main", *subcommand]
+    child_env = {**os.environ}
+    if env_opts:
+        strip_var = env_opts.get("_strip")
+        if strip_var:
+            child_env.pop(strip_var, None)
+    child_env["HERMES_NONINTERACTIVE"] = "1"
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            env=child_env,
+            timeout=timeout,
+        )
+        output = (result.stdout or "") + (result.stderr or "")
+        return result.returncode, output.strip()
+    except subprocess.TimeoutExpired:
+        return -1, "Gateway action timed out"
+
+
 def _spawn_hermes_action(subcommand: List[str], name: str) -> subprocess.Popen:
     """Spawn ``hermes <subcommand>`` detached and record the Popen handle.
 
@@ -9629,26 +9665,74 @@ async def set_webhook_enabled(name: str, body: WebhookEnabledToggle):
 
 @app.post("/api/gateway/start")
 async def start_gateway(profile: Optional[str] = None):
+    """Start the gateway for the given profile.
+
+    If the profile's systemd service isn't installed yet, install it first
+    (non-interactive), then start.  Returns the real result instead of
+    fire-and-forget so the frontend shows accurate success/error toasts.
+    """
+    subcmd_install = _gateway_subcommand(profile, "install")
+    subcmd_install += ["--force", "--start-now", "--no-start-on-login"]
+    subcmd_start = _gateway_subcommand(profile, "start")
+
+    # Use run_in_executor to avoid blocking the event loop.
+    loop = asyncio.get_event_loop()
     try:
-        proc = _spawn_hermes_action(_gateway_subcommand(profile, "start"), "gateway-start")
-    except HTTPException:
-        raise
+        rc, output = await loop.run_in_executor(
+            None,
+            _run_gateway_cli_sync,
+            subcmd_start,
+            {"_strip": "_HERMES_GATEWAY"},  # strip this env var so the child isn't blocked
+            30,
+        )
     except Exception as exc:
-        _log.exception("Failed to spawn gateway start")
         raise HTTPException(status_code=500, detail=f"Failed to start gateway: {exc}")
-    return {"ok": True, "pid": proc.pid, "name": "gateway-start"}
+
+    if rc != 0 and "not installed" in output:
+        # Service not installed — install + start in one shot.
+        try:
+            rc2, output2 = await loop.run_in_executor(
+                None,
+                _run_gateway_cli_sync,
+                subcmd_install,
+                {"_strip": "_HERMES_GATEWAY"},
+                60,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to install+start gateway: {exc}")
+        if rc2 != 0:
+            raise HTTPException(status_code=500, detail=output2 or "Gateway install+start failed")
+        return {"ok": True, "method": "install+start"}
+    elif rc != 0:
+        raise HTTPException(status_code=500, detail=output or "Gateway start failed")
+
+    return {"ok": True, "method": "start"}
 
 
 @app.post("/api/gateway/stop")
 async def stop_gateway(profile: Optional[str] = None):
+    """Stop the gateway for the given profile.
+
+    Strips ``_HERMES_GATEWAY`` from the subprocess environment so the
+    self-targeting guard in ``gateway.py`` doesn't block the stop.
+    """
+    subcmd_stop = _gateway_subcommand(profile, "stop")
+    loop = asyncio.get_event_loop()
     try:
-        proc = _spawn_hermes_action(_gateway_subcommand(profile, "stop"), "gateway-stop")
-    except HTTPException:
-        raise
+        rc, output = await loop.run_in_executor(
+            None,
+            _run_gateway_cli_sync,
+            subcmd_stop,
+            {"_strip": "_HERMES_GATEWAY"},
+            60,
+        )
     except Exception as exc:
-        _log.exception("Failed to spawn gateway stop")
         raise HTTPException(status_code=500, detail=f"Failed to stop gateway: {exc}")
-    return {"ok": True, "pid": proc.pid, "name": "gateway-stop"}
+
+    if rc != 0:
+        raise HTTPException(status_code=500, detail=output or "Gateway stop failed")
+
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
