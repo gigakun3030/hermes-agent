@@ -522,10 +522,46 @@ export default function ProfilesPage() {
         await api.stopGateway(name);
       }
       showToast(`Gateway ${verb}ed for profile '${name}'`, "success");
-      // Give the backend a second to update status, then reload
-      setTimeout(load, 1500);
+      // Optimistically update local state so the UI reflects the change
+      // immediately instead of waiting for the backend status file.
+      setProfiles((prev) =>
+        prev.map((p) =>
+          p.name === name ? { ...p, gateway_running: verb === "start" } : p,
+        ),
+      );
+      // Also reload profile list from backend, retrying up to 5 times
+      // with 1.5s gaps to give systemd time to write the PID / state file.
+      let attempts = 0;
+      const maxAttempts = 5;
+      const poll = () => {
+        attempts++;
+        if (attempts > maxAttempts) return;
+        Promise.all([api.getProfiles().catch(() => null)])
+          .then(([res]) => {
+            if (!res) {
+              setTimeout(poll, 1500);
+              return;
+            }
+            const updated = res.profiles.find((p: any) => p.name === name);
+            if (
+              updated &&
+              updated.gateway_running === (verb === "start")
+            ) {
+              setProfiles(res.profiles);
+              return; // converged — done
+            }
+            // Not yet converged — retry
+            setTimeout(poll, 1500);
+          })
+          .catch(() => setTimeout(poll, 1500));
+      };
+      setTimeout(poll, 1500);
     } catch (e) {
-      showToast(`Failed to ${verb} gateway for '${name}': ${e}`, "error");
+      const msg =
+        e instanceof Error
+          ? e.message.replace(/^5\d{2}:\s*/, "").replace(/[{}"\\]/g, "").replace(/detail:/i, "").trim()
+          : String(e);
+      showToast(`Failed to ${verb} gateway for '${name}': ${msg}`, "error");
     } finally {
       setBusyGateways((prev) => ({ ...prev, [name]: false }));
     }
