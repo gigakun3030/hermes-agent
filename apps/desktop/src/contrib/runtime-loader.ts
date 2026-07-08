@@ -21,10 +21,15 @@ import { installPluginSdk, sdkImportMap } from '@/sdk/runtime'
 import { notifyError } from '@/store/notifications'
 
 import { createPluginContext, type HermesPlugin } from './plugin'
+import { dropPlugin, pluginDisabled, type PluginKind, publishPlugin } from './plugins-store'
 
 interface LoadOptions {
+  /** Absolute plugin.js path (disk plugins) — recorded for reveal/inventory. */
+  file?: string
   /** `sha256-<base64>` — verified against the source before evaluation. */
   integrity?: string
+  /** Inventory bucket; the disk door is the default runtime source. */
+  kind?: PluginKind
 }
 
 /** Live runtime plugins: id -> disposers (unload/reload support). */
@@ -79,16 +84,42 @@ export async function loadRuntimePlugin(source: string, origin: string, options:
       throw new Error(`${origin} has no valid default HermesPlugin export`)
     }
 
-    // Reload = dispose the previous incarnation, then register fresh.
-    unloadRuntimePlugin(plugin.id)
-    const disposers: (() => void)[] = []
-    plugin.register(createPluginContext(plugin.id, dispose => disposers.push(dispose)))
-    loaded.set(plugin.id, disposers)
+    const record = {
+      id: plugin.id,
+      name: plugin.name ?? plugin.id,
+      kind: options.kind ?? 'disk',
+      file: options.file
+    }
+
+    const activate = () => {
+      // Reload = dispose the previous incarnation, then register fresh.
+      unloadRuntimePlugin(plugin.id)
+      const disposers: (() => void)[] = []
+      plugin.register(createPluginContext(plugin.id, dispose => disposers.push(dispose)))
+      loaded.set(plugin.id, disposers)
+      publishPlugin({ ...record, status: 'loaded' })
+    }
+
+    publishPlugin({ ...record, status: 'disabled' }, { activate, deactivate: () => unloadRuntimePlugin(plugin.id) })
+
+    // A disabled plugin still inventories (settings shows it, toggle
+    // reactivates via the handle above) — it just never registers.
+    if (!pluginDisabled(plugin.id)) {
+      activate()
+    }
 
     return plugin.id
   } catch (error) {
     console.error(`[plugins] runtime load failed (${origin})`, error)
     notifyError(error, `Plugin "${origin}" failed to load`)
+    publishPlugin({
+      id: origin,
+      name: origin,
+      kind: options.kind ?? 'disk',
+      file: options.file,
+      status: 'error',
+      error: error instanceof Error ? error.message : String(error)
+    })
 
     return null
   }
@@ -124,10 +155,16 @@ async function loadDiskPlugin(name: string, file: string): Promise<void> {
 
   try {
     const { text } = await desktop.readFileText(file)
-    const id = await loadRuntimePlugin(text, name)
+    const id = await loadRuntimePlugin(text, name, { file })
 
     if (entry) {
       entry.id = id ?? entry.id
+    }
+
+    // A fixing save under a different plugin id — drop the folder-named
+    // error record so the inventory shows one row, not a ghost.
+    if (id && id !== name) {
+      dropPlugin(name)
     }
   } catch {
     // File vanished mid-read — the next scan reconciles.
@@ -173,7 +210,7 @@ async function scanDiskPlugins(): Promise<void> {
       }
     }
 
-    // Folder deleted -> plugin gone, cleanly.
+    // Folder deleted -> plugin gone, cleanly (inventory row included).
     for (const [name, record] of disk) {
       if (seen.has(name)) {
         continue
@@ -181,7 +218,10 @@ async function scanDiskPlugins(): Promise<void> {
 
       if (record.id) {
         unloadRuntimePlugin(record.id)
+        dropPlugin(record.id)
       }
+
+      dropPlugin(name)
 
       if (record.watchId) {
         void desktop.stopPreviewFileWatch(record.watchId)

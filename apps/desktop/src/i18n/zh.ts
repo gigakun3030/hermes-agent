@@ -301,7 +301,21 @@ export const zh: Translations = {
       mcp: 'MCP',
       archivedChats: '已归档对话',
       about: '关于',
-      notifications: '通知'
+      notifications: '通知',
+      plugins: '插件'
+    },
+    plugins: {
+      title: '桌面插件',
+      blurb: '加载到此应用中的界面扩展——随构建捆绑，或放入 desktop-plugins 文件夹（包括 Hermes 编写的插件）。禁用会即时卸载插件并在重启后保持。',
+      count: n => `已安装 ${n} 个`,
+      openFolder: '打开插件文件夹',
+      rescan: '重新扫描',
+      reveal: '在文件管理器中显示',
+      enable: '启用',
+      disable: '禁用',
+      failed: '失败',
+      empty: '尚未安装桌面插件。',
+      kinds: { bundled: '内置', disk: '磁盘', runtime: '运行时' }
     },
     notifications: {
       title: '通知',

@@ -36,6 +36,7 @@ import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { DecodeText } from '@/components/ui/decode-text'
 import { emitGatewayEvent } from '@/contrib/events'
+import { ContribBoundary } from '@/contrib/react/boundary'
 import { useContributions } from '@/contrib/react/use-contributions'
 import { getSessionMessages, PROMPT_SUBMIT_REQUEST_TIMEOUT_MS, triggerCronJob } from '@/hermes'
 import {
@@ -1249,9 +1250,14 @@ export function ContribWiring({ children }: { children: ReactNode }) {
         <Route element={null} path="settings" />
         <Route element={null} path="starmap" />
         {/* Registry-contributed pages (core features + plugins) render in the
-            workspace pane like any built-in view. */}
+            workspace pane like any built-in view — behind the same blast wall
+            as every other contribution mount. */}
         {routeContributions.map(route => (
-          <Route element={<>{route.render()}</>} key={route.key} path={route.path.slice(1)} />
+          <Route
+            element={<ContribBoundary id={route.key}>{route.render()}</ContribBoundary>}
+            key={route.key}
+            path={route.path.slice(1)}
+          />
         ))}
         <Route element={<Navigate replace to={NEW_CHAT_ROUTE} />} path="new" />
         <Route element={<LegacySessionRedirect />} path="sessions/:sessionId" />

@@ -12,6 +12,7 @@
 import helloRuntimeSource from '../plugins/hello-runtime/plugin.runtime.js?raw'
 
 import { createPluginContext, type HermesPlugin } from './plugin'
+import { pluginDisabled, publishPlugin } from './plugins-store'
 import { loadRuntimePlugin, watchRuntimePlugins } from './runtime-loader'
 
 const modules = import.meta.glob<{ default: HermesPlugin }>('../plugins/*/plugin.{ts,tsx}', { eager: true })
@@ -35,15 +36,39 @@ export function discoverBundledPlugins(): void {
       continue
     }
 
-    try {
-      plugin.register(createPluginContext(plugin.id))
-    } catch (error) {
-      console.error(`[plugins] ${plugin.id} failed to register`, error)
+    // Same inventory + live-toggle contract as runtime plugins: each bundled
+    // plugin publishes a record with activate/deactivate handles, and a
+    // persisted disable survives boots by skipping registration here.
+    const record = { id: plugin.id, name: plugin.name ?? plugin.id, kind: 'bundled' as const }
+    let disposers: (() => void)[] = []
+
+    const activate = () => {
+      disposers.forEach(dispose => dispose())
+      disposers = []
+
+      try {
+        plugin.register(createPluginContext(plugin.id, dispose => disposers.push(dispose)))
+        publishPlugin({ ...record, status: 'loaded' })
+      } catch (error) {
+        console.error(`[plugins] ${plugin.id} failed to register`, error)
+        publishPlugin({ ...record, status: 'error', error: error instanceof Error ? error.message : String(error) })
+      }
+    }
+
+    const deactivate = () => {
+      disposers.forEach(dispose => dispose())
+      disposers = []
+    }
+
+    publishPlugin({ ...record, status: 'disabled' }, { activate, deactivate })
+
+    if (!pluginDisabled(plugin.id)) {
+      activate()
     }
   }
 
   // The runtime pipeline, dogfooded on every boot + the SELF-MAINTAINING
   // disk door (fs-watched hot reloads, slow folder reconciliation).
-  void loadRuntimePlugin(helloRuntimeSource, 'hello-runtime')
+  void loadRuntimePlugin(helloRuntimeSource, 'hello-runtime', { kind: 'runtime' })
   watchRuntimePlugins()
 }

@@ -71,7 +71,14 @@ The ONLY import surface is `@hermes/plugin-sdk` (plus `react` /
   `review`, `logs`), `pos` is `'top'|'bottom'|'left'|'right'|'center'`.
   E.g. "below the conversation" = `dock: { pane: 'workspace', pos: 'bottom' }`
   — declare a `height` (e.g. `'200px'`) so it doesn't take half the zone.
+- Full PAGES: register `area: ROUTES_AREA` with `data: { path: '/my-page' }`
+  and a `render` — the page mounts in the workspace (main) pane like any
+  built-in view. Pair it with a `PALETTE_AREA` command or statusbar chip
+  calling `host.navigate('/my-page')` so users can reach it.
 - `ctx.storage.get/set/remove` — persistence namespaced to your plugin.
+- Users manage plugins in Settings → Plugins (enable/disable live, reveal
+  folder). A disabled plugin stays disabled across restarts — don't fight
+  it; the user turned you off.
 - UI: `Tip`, `Button`, `Codicon`, `Input`, `StatusDot`, `LogView`, `cn`,
   `icons.*` — use these so the plugin looks native.
 

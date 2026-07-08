@@ -310,7 +310,22 @@ export const en: Translations = {
       mcp: 'MCP',
       archivedChats: 'Archived Chats',
       about: 'About',
-      notifications: 'Notifications'
+      notifications: 'Notifications',
+      plugins: 'Plugins'
+    },
+    plugins: {
+      title: 'Desktop plugins',
+      blurb:
+        'UI extensions loaded into this app — bundled with the build, or dropped into the desktop-plugins folder (including ones Hermes writes). Disabling unloads a plugin live and survives restarts.',
+      count: n => `${n} installed`,
+      openFolder: 'Open plugins folder',
+      rescan: 'Rescan',
+      reveal: 'Reveal in file manager',
+      enable: 'Enable',
+      disable: 'Disable',
+      failed: 'failed',
+      empty: 'No desktop plugins installed yet.',
+      kinds: { bundled: 'bundled', disk: 'on disk', runtime: 'runtime' }
     },
     notifications: {
       title: 'Notifications',
