@@ -121,7 +121,7 @@ export { COMPOSER_AREAS, type ComposerAttachmentProvider, type ComposerMiddlewar
 // -- ui: the design language --------------------------------------------------
 
 export { PALETTE_AREA, type PaletteContribution } from '@/app/command-palette/contrib'
-export { type RouteContribution, ROUTES_AREA } from '@/app/routes'
+export { type RouteContribution, ROUTES_AREA, SIDEBAR_NAV_AREA, type SidebarNavContribution } from '@/app/routes'
 export type { StatusbarItem } from '@/app/shell/statusbar-controls'
 
 export type { TitlebarTool } from '@/app/shell/titlebar-controls'

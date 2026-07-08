@@ -89,6 +89,22 @@ function isContributedPath(pathname: string): boolean {
   return contributedRoutes().some(route => route.path === pathname)
 }
 
+// ── Contributed sidebar nav — the `sidebar.nav` registry area ────────────────
+// A DATA contribution adds a row to the sidebar's top nav (below Artifacts).
+// Pair with a ROUTES_AREA page: the row navigates to `path` and lights up
+// while the app is there.
+
+export const SIDEBAR_NAV_AREA = 'sidebar.nav'
+
+/** Payload of a `sidebar.nav` data contribution. */
+export interface SidebarNavContribution {
+  /** Codicon name, e.g. `'project'`. */
+  codicon: string
+  label: string
+  /** Route to navigate to (usually a contributed page's path). */
+  path: string
+}
+
 // Views that render as a full-screen modal card (OverlayView) over the shell.
 // While one is open the app's titlebar control clusters must hide so they don't
 // bleed over the overlay (they sit at a higher z-index than the overlay card).

@@ -73,8 +73,10 @@ The ONLY import surface is `@hermes/plugin-sdk` (plus `react` /
   — declare a `height` (e.g. `'200px'`) so it doesn't take half the zone.
 - Full PAGES: register `area: ROUTES_AREA` with `data: { path: '/my-page' }`
   and a `render` — the page mounts in the workspace (main) pane like any
-  built-in view. Pair it with a `PALETTE_AREA` command or statusbar chip
-  calling `host.navigate('/my-page')` so users can reach it.
+  built-in view. Make it reachable with a sidebar nav row:
+  `ctx.register({ id: 'nav', area: SIDEBAR_NAV_AREA, data: { path: '/my-page', label: 'My Page', codicon: 'project' } })`
+  (renders below Artifacts, lights up at the route) — and/or a
+  `PALETTE_AREA` command calling `host.navigate('/my-page')`.
 - `ctx.storage.get/set/remove` — persistence namespaced to your plugin.
 - Users manage plugins in Settings → Plugins (enable/disable live, reveal
   folder). A disabled plugin stays disabled across restarts — don't fight

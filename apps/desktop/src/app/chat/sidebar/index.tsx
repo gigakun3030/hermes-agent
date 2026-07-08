@@ -3,6 +3,7 @@ import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { useStore } from '@nanostores/react'
 import type * as React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 
 import { PlatformAvatar } from '@/app/messaging/platform-icon'
 import { Button } from '@/components/ui/button'
@@ -19,6 +20,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem
 } from '@/components/ui/sidebar'
+import { useContributions } from '@/contrib/react/use-contributions'
 import { searchSessions, type SessionInfo, type SessionSearchResult } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { comboTokens } from '@/lib/keybinds/combo'
@@ -93,7 +95,14 @@ import {
   setCurrentCwd
 } from '@/store/session'
 
-import { type AppView, ARTIFACTS_ROUTE, MESSAGING_ROUTE, SKILLS_ROUTE } from '../../routes'
+import {
+  type AppView,
+  ARTIFACTS_ROUTE,
+  MESSAGING_ROUTE,
+  SIDEBAR_NAV_AREA,
+  type SidebarNavContribution,
+  SKILLS_ROUTE
+} from '../../routes'
 import type { SidebarNavItem } from '../../types'
 
 import { countLabel } from './chrome'
@@ -227,6 +236,34 @@ export function ChatSidebar({
 }: ChatSidebarProps) {
   const { t } = useI18n()
   const s = t.sidebar
+  const { pathname } = useLocation()
+  // Contributed nav rows (plugins pairing a page with a sidebar entry) render
+  // below the built-ins with the same chrome; active = at their route.
+  const navContributions = useContributions(SIDEBAR_NAV_AREA)
+
+  const contributedNav = useMemo<SidebarNavItem[]>(
+    () =>
+      navContributions.flatMap(c => {
+        const data = c.data as Partial<SidebarNavContribution> | undefined
+
+        if (!data?.path?.startsWith('/') || !data.label) {
+          return []
+        }
+
+        const codicon = data.codicon || 'plug'
+
+        return [
+          {
+            id: c.id,
+            label: data.label,
+            icon: (props: { className?: string }) => <Codicon name={codicon} {...props} />,
+            route: data.path
+          }
+        ]
+      }),
+    [navContributions]
+  )
+
   const panesFlipped = useStore($panesFlipped)
   const agentsGrouped = useStore($sidebarAgentsGrouped)
   const pinnedSessionIds = useStore($pinnedSessionIds)
@@ -1038,13 +1075,15 @@ export function ChatSidebar({
         <SidebarGroup className="shrink-0 p-0 pb-2 pt-[calc(var(--titlebar-height)+0.375rem)]">
           <SidebarGroupContent>
             <SidebarMenu className="gap-px">
-              {SIDEBAR_NAV.map(item => {
+              {[...SIDEBAR_NAV, ...contributedNav].map(item => {
                 const isInteractive = Boolean(item.action) || Boolean(item.route)
 
                 const active =
                   (item.id === 'skills' && currentView === 'skills') ||
                   (item.id === 'messaging' && currentView === 'messaging') ||
-                  (item.id === 'artifacts' && currentView === 'artifacts')
+                  (item.id === 'artifacts' && currentView === 'artifacts') ||
+                  // Contributed rows light up at their own route.
+                  (Boolean(item.route) && pathname === item.route)
 
                 const isNewSession = item.id === 'new-session'
 
