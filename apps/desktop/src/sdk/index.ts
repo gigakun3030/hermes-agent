@@ -126,11 +126,52 @@ export type { StatusbarItem } from '@/app/shell/statusbar-controls'
 
 export type { TitlebarTool } from '@/app/shell/titlebar-controls'
 export { StatusDot, type StatusTone } from '@/components/status-dot'
+export { Badge } from '@/components/ui/badge'
 export { Button } from '@/components/ui/button'
+export { Checkbox } from '@/components/ui/checkbox'
 export { Codicon } from '@/components/ui/codicon'
+export { ConfirmDialog } from '@/components/ui/confirm-dialog'
+export {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger
+} from '@/components/ui/context-menu'
+export { CopyButton } from '@/components/ui/copy-button'
 export { DecodeText } from '@/components/ui/decode-text'
+export {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger
+} from '@/components/ui/dialog'
+export {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
+export { EmptyState } from '@/components/ui/empty-state'
+export { ErrorState } from '@/components/ui/error-state'
+export { GlyphSpinner } from '@/components/ui/glyph-spinner'
 export { Input } from '@/components/ui/input'
+export { Kbd, KbdGroup } from '@/components/ui/kbd'
 export { LogView } from '@/components/ui/log-view'
+export { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+export { ScrollArea } from '@/components/ui/scroll-area'
+export { SearchField } from '@/components/ui/search-field'
+export { SegmentedControl } from '@/components/ui/segmented-control'
+export { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+export { Separator } from '@/components/ui/separator'
+export { Skeleton } from '@/components/ui/skeleton'
+export { Switch } from '@/components/ui/switch'
+export { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+export { Textarea } from '@/components/ui/textarea'
 export { Tip, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 export type { GatewayEventListener } from '@/contrib/events'
 

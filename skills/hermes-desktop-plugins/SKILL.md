@@ -81,8 +81,14 @@ The ONLY import surface is `@hermes/plugin-sdk` (plus `react` /
 - Users manage plugins in Settings → Plugins (enable/disable live, reveal
   folder). A disabled plugin stays disabled across restarts — don't fight
   it; the user turned you off.
-- UI: `Tip`, `Button`, `Codicon`, `Input`, `StatusDot`, `LogView`, `cn`,
-  `icons.*` — use these so the plugin looks native.
+- UI: the app's design language, importable directly — `Button`, `Input`,
+  `Textarea`, `Select*`, `Switch`, `Checkbox`, `SegmentedControl`, `Tabs*`,
+  `Dialog*`, `ConfirmDialog`, `DropdownMenu*`, `ContextMenu*`, `Popover*`,
+  `Tip`/`Tooltip*`, `Badge`, `Kbd`/`KbdGroup`, `SearchField`, `ScrollArea`,
+  `Separator`, `Skeleton`, `GlyphSpinner`, `EmptyState`, `ErrorState`,
+  `CopyButton`, `StatusDot`, `LogView`, `Codicon`, `DecodeText`, plus `cn`
+  and `icons.*`. Prefer these over hand-rolled elements so the plugin looks
+  native; style with theme vars, never hardcoded colors.
 
 ## Procedure
 
