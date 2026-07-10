@@ -942,37 +942,54 @@ def cron_delivery_targets(profile: Optional[str] = None) -> list[dict]:
 
     When *profile* is specified, loads that profile's gateway config to
     determine which platforms are connected (instead of the default profile).
-    Pass ``"all"`` to aggregate platforms across every available profile.
+    Pass ``"all"`` to aggregate platforms across every available profile
+    (each target includes a ``"profile"`` field).
 
-    Returns a list of dicts: ``{"id", "name", "home_target_set", "home_env_var"}``
-    ordered by the gateway's canonical platform order. Callers should always
-    prepend the implicit ``local`` option themselves — it needs no config.
+    Returns a list of dicts: ``{"id", "name", "profile", "home_target_set",
+    "home_env_var", "home_channel_id"}``.
     """
     targets: list[dict] = []
 
-    def _load_for_home(home_path: Path) -> set[str]:
-        """Load connected platforms from a specific Hermes home directory."""
+    def _targets_for_home(home_path: Path, profile_name: str) -> list[dict]:
+        """Return delivery targets for one profile, annotated with profile."""
+        result: list[dict] = []
         try:
-            from hermes_constants import (
-                set_hermes_home_override,
-                reset_hermes_home_override,
-            )
+            from hermes_constants import set_hermes_home_override, reset_hermes_home_override
 
             token = set_hermes_home_override(home_path)
             try:
                 from gateway.config import load_gateway_config
-
                 gw = load_gateway_config()
-                return {p.value for p in gw.get_connected_platforms()}
+                connected = {p.value for p in gw.get_connected_platforms()}
             finally:
                 reset_hermes_home_override(token)
+
+            for name in _iter_home_target_platforms():
+                if name not in connected:
+                    continue
+                if not _is_known_delivery_platform(name):
+                    continue
+                # Resolve home channel inside the profile context
+                token2 = set_hermes_home_override(home_path)
+                try:
+                    env_var = _resolve_home_env_var(name)
+                    chat_id = _get_home_target_chat_id(name)
+                finally:
+                    reset_hermes_home_override(token2)
+                result.append({
+                    "id": name,
+                    "name": name.replace("_", " ").title(),
+                    "profile": profile_name,
+                    "home_target_set": bool(chat_id),
+                    "home_env_var": env_var or None,
+                    "home_channel_id": chat_id or None,
+                })
         except Exception:
             logger.debug(
-                "cron_delivery_targets: gateway config unavailable for %s",
-                home_path,
-                exc_info=True,
+                "cron_delivery_targets: platforms unavailable for %s (%s)",
+                profile_name, home_path, exc_info=True,
             )
-            return set()
+        return result
 
     try:
         if profile and profile != "default":
@@ -980,48 +997,62 @@ def cron_delivery_targets(profile: Optional[str] = None) -> list[dict]:
 
             if profile == "all":
                 profile_list = list(profiles_mod.list_profiles())
-                connected: set[str] = set()
+                seen_ids: set[str] = set()
                 for p in profile_list:
                     home = profiles_mod.get_profile_dir(p.name)
-                    connected |= _load_for_home(home)
+                    for t in _targets_for_home(home, p.name):
+                        if t["id"] in seen_ids:
+                            continue
+                        seen_ids.add(t["id"])
+                        targets.append(t)
             else:
                 canon = profiles_mod.normalize_profile_name(profile)
                 profiles_mod.validate_profile_name(canon)
                 if not profiles_mod.profile_exists(canon):
                     return []
                 home = profiles_mod.get_profile_dir(canon)
-                connected = _load_for_home(home)
+                targets = _targets_for_home(home, canon)
         else:
-            from gateway.config import load_gateway_config
-
-            gateway_config = load_gateway_config()
-            connected = {p.value for p in gateway_config.get_connected_platforms()}
+            targets = _targets_for_home(get_hermes_home(), "default")
     except Exception:
         logger.debug("cron_delivery_targets: gateway config unavailable", exc_info=True)
-        connected = set()
-
-    for name in _iter_home_target_platforms():
-        if name not in connected:
-            continue
-        if not _is_known_delivery_platform(name):
-            continue
-        env_var = _resolve_home_env_var(name)
-        targets.append(
-            {
-                "id": name,
-                "name": name.replace("_", " ").title(),
-                "home_target_set": bool(_get_home_target_chat_id(name)),
-                "home_env_var": env_var or None,
-                "home_channel_id": _get_home_target_chat_id(name) or None,
-            }
-        )
     return targets
 
 
-def _resolve_single_delivery_target(job: dict, deliver_value: str) -> Optional[dict]:
-    """Resolve one concrete auto-delivery target for a cron job."""
+def _parse_deliver_value(deliver_value: str) -> tuple[str, Optional[str], str]:
+    """Parse a deliver value into (platform, profile_override, canonical).
 
+    A ``@profile`` suffix on the platform name indicates cross-profile
+    delivery routing.  Examples::
+
+        "telegram"             -> ("telegram", None, "telegram")
+        "telegram:123"         -> ("telegram", None, "telegram:123")
+        "discord@hermesta:456" -> ("discord", "hermesta", "discord:456")
+    """
+    platform_part = deliver_value
+    rest_part = ""
+    if ":" in deliver_value:
+        platform_part, rest_part = deliver_value.split(":", 1)
+    profile: Optional[str] = None
+    base_platform = platform_part
+    if "@" in platform_part:
+        base_platform, profile = platform_part.split("@", 1)
+        if not profile:
+            profile = None
+    canonical = base_platform
+    if rest_part:
+        canonical = f"{base_platform}:{rest_part}"
+    return base_platform, profile, canonical
+
+
+def _resolve_single_delivery_target(job: dict, deliver_value: str) -> Optional[dict]:
+    """Resolve one concrete auto-delivery target for a cron job.
+
+    Supports ``@profile`` suffix for cross-profile delivery routing.
+    """
     origin = _resolve_origin(job)
+    base_platform, profile_override, canonical_value = _parse_deliver_value(deliver_value)
+    deliver_value = canonical_value
 
     if deliver_value == "local":
         return None
@@ -1032,6 +1063,7 @@ def _resolve_single_delivery_target(job: dict, deliver_value: str) -> Optional[d
                 "platform": origin["platform"],
                 "chat_id": str(origin["chat_id"]),
                 "thread_id": origin.get("thread_id"),
+                "profile": profile_override,
             }
         # Origin missing (e.g. job created via API/script) — try each
         # platform's home channel as a fallback instead of silently dropping.
@@ -1047,6 +1079,7 @@ def _resolve_single_delivery_target(job: dict, deliver_value: str) -> Optional[d
                     "platform": platform_name,
                     "chat_id": chat_id,
                     "thread_id": _get_home_target_thread_id(platform_name),
+                    "profile": profile_override,
                 }
         return None
 
@@ -1081,6 +1114,7 @@ def _resolve_single_delivery_target(job: dict, deliver_value: str) -> Optional[d
             "platform": platform_name,
             "chat_id": chat_id,
             "thread_id": thread_id,
+            "profile": profile_override,
         }
 
     platform_name = deliver_value
@@ -1089,6 +1123,7 @@ def _resolve_single_delivery_target(job: dict, deliver_value: str) -> Optional[d
             "platform": platform_name,
             "chat_id": str(origin["chat_id"]),
             "thread_id": origin.get("thread_id"),
+            "profile": profile_override,
         }
 
     if not _is_known_delivery_platform(platform_name):
@@ -1101,6 +1136,7 @@ def _resolve_single_delivery_target(job: dict, deliver_value: str) -> Optional[d
         "platform": platform_name,
         "chat_id": chat_id,
         "thread_id": _get_home_target_thread_id(platform_name),
+        "profile": profile_override,
     }
 
 
@@ -1419,6 +1455,32 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
         chat_id = target["chat_id"]
         thread_id = target.get("thread_id")
 
+        # Cross-profile delivery: if the target specifies a different profile,
+        # temporarily switch HERMES_HOME so the correct gateway config (bot
+        # tokens) is loaded for this delivery.
+        _switched_profile = False
+        _prior_home = os.environ.get("HERMES_HOME", "")
+        target_profile = target.get("profile") or ""
+        job_profile = job.get("profile_name") or job.get("profile") or "default"
+        if target_profile and target_profile != job_profile:
+            try:
+                from hermes_cli import profiles as profiles_mod
+                canon = profiles_mod.normalize_profile_name(target_profile)
+                if profiles_mod.profile_exists(canon):
+                    home = str(profiles_mod.get_profile_dir(canon))
+                    os.environ["HERMES_HOME"] = home
+                    config = load_gateway_config()
+                    _switched_profile = True
+                    logger.info(
+                        "Job '%s': cross-profile delivery to %s via profile '%s'",
+                        job.get("id", "?"), platform_name, canon,
+                    )
+            except Exception:
+                logger.warning(
+                    "Job '%s': profile switch to '%s' failed",
+                    job.get("id", "?"), target_profile, exc_info=True,
+                )
+
         # Diagnostic: log thread_id for topic-aware delivery debugging
         origin = _resolve_origin(job) or {}
         origin_thread = origin.get("thread_id")
@@ -1452,6 +1514,13 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
             msg = f"unknown platform '{platform_name}'"
             logger.warning("Job '%s': %s", job["id"], msg)
             delivery_errors.append(msg)
+            if _switched_profile:
+                if _prior_home:
+                    os.environ["HERMES_HOME"] = _prior_home
+                else:
+                    os.environ.pop("HERMES_HOME", None)
+                config = load_gateway_config()
+                _switched_profile = False
             continue
 
         pconfig = config.platforms.get(platform)
@@ -1459,6 +1528,13 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
             msg = f"platform '{platform_name}' not configured/enabled"
             logger.warning("Job '%s': %s", job["id"], msg)
             delivery_errors.append(msg)
+            if _switched_profile:
+                if _prior_home:
+                    os.environ["HERMES_HOME"] = _prior_home
+                else:
+                    os.environ.pop("HERMES_HOME", None)
+                config = load_gateway_config()
+                _switched_profile = False
             continue
 
         # Prefer the live adapter when the gateway is running — this supports E2EE
@@ -1863,6 +1939,15 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
                 thread_id=thread_id, user_id=origin_user_id,
                 enabled=mirror_this_target and not thread_seeded,
             )
+
+        # Restore HERMES_HOME after cross-profile delivery
+        if _switched_profile:
+            if _prior_home:
+                os.environ["HERMES_HOME"] = _prior_home
+            else:
+                os.environ.pop("HERMES_HOME", None)
+            config = load_gateway_config()
+            _switched_profile = False
 
     if delivery_errors:
         return "; ".join(delivery_errors)
