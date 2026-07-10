@@ -1,10 +1,15 @@
 import type { CronJob, CronJobMutation } from "./api";
 
+export interface DeliverEntry {
+  gateway: string;
+  channel: string;
+}
+
 export interface CronJobFormState {
   name: string;
   prompt: string;
   schedule: string;
-  deliver: string;
+  deliver_entries: DeliverEntry[];
   skills: string[];
   provider: string;
   model: string;
@@ -49,11 +54,19 @@ function asString(value: unknown): string {
 export function buildCronJobPayload(form: CronJobFormState): CronJobMutation {
   const contextFrom = splitCronList(form.context_from);
   const enabledToolsets = form.enabled_toolsets.filter(Boolean);
+  const entries = form.deliver_entries?.length ? form.deliver_entries : [{ gateway: "local", channel: "" }];
+  const deliver = entries
+    .map(e => {
+      const g = e.gateway.trim() || "local";
+      const c = e.channel?.trim() || "";
+      return c ? `${g}:${c}` : g;
+    })
+    .join(",");
   return {
     name: form.name.trim(),
     prompt: form.prompt.trim(),
     schedule: form.schedule.trim(),
-    deliver: form.deliver.trim() || "local",
+    deliver,
     skills: form.skills.filter(Boolean),
     provider: optionalText(form.provider),
     model: optionalText(form.model),
@@ -74,6 +87,21 @@ export function cronJobHasExecutionContent(
 }
 
 export function cronJobFormFromJob(job: CronJob): CronJobFormState {
+  const deliverStr = asString(job.deliver).trim();
+  const deliver_entries: DeliverEntry[] = deliverStr
+    ? deliverStr.split(",").map((part) => {
+        const colonIdx = part.indexOf(":");
+        if (colonIdx === -1) {
+          return { gateway: part.trim(), channel: "" };
+        } else {
+          return {
+            gateway: part.substring(0, colonIdx).trim(),
+            channel: part.substring(colonIdx + 1).trim(),
+          };
+        }
+      })
+    : [{ gateway: "local", channel: "" }];
+
   return {
     name: asString(job.name),
     prompt: asString(job.prompt),
@@ -81,7 +109,7 @@ export function cronJobFormFromJob(job: CronJob): CronJobFormState {
       asString(job.schedule?.expr) ||
       asString(job.schedule?.run_at) ||
       asString(job.schedule_display),
-    deliver: asString(job.deliver) || "local",
+    deliver_entries,
     skills: Array.isArray(job.skills) ? job.skills.filter(Boolean) : [],
     provider: asString(job.provider),
     model: asString(job.model),

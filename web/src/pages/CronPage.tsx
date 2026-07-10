@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
-import { Clock, Pause, Pencil, Play, Trash2, X, Zap } from "lucide-react";
+import { Clock, Pause, Pencil, Play, Plus, Trash2, X, Zap } from "lucide-react";
 import { Badge } from "@nous-research/ui/ui/components/badge";
 import { Button } from "@nous-research/ui/ui/components/button";
 import { Select, SelectOption } from "@nous-research/ui/ui/components/select";
@@ -133,7 +133,7 @@ function emptyCronJobForm(): CronJobEditorState {
     name: "",
     prompt: "",
     schedule: "",
-    deliver: "local",
+    deliver_entries: [{ gateway: "local", channel: "" }],
     skills: [],
     provider: "",
     model: "",
@@ -337,21 +337,6 @@ function CronJobFormFields({
   ) => {
     onChange({ ...form, [key]: next });
   };
-  const onlyLocalAvailable =
-    deliveryTargets.filter((target) => target.id !== "local").length === 0;
-
-  const deliveryOptions = selectOptions(
-    form.deliver,
-    deliveryTargets.map((target) => {
-      const base = target.id === "local" ? t.cron.delivery.local : target.name;
-      if (target.id !== "local" && !target.home_target_set) {
-        const hint = t.cron.delivery.needsHomeChannel ?? "set a home channel first";
-        return { value: target.id, label: `${base} — ${hint}` };
-      }
-      return { value: target.id, label: base };
-    }),
-  );
-
   return (
     <>
       <div className="grid gap-2">
@@ -382,20 +367,65 @@ function CronJobFormFields({
       />
 
       <div className="grid gap-2">
-        <Label htmlFor={`${idPrefix}-deliver`}>{t.cron.deliverTo}</Label>
-        <Select
-          id={`${idPrefix}-deliver`}
-          value={form.deliver}
-          onValueChange={(v) => update("deliver", v)}
+        <Label>Deliver to</Label>
+        
+        {/* Entry rows */}
+        {form.deliver_entries?.map((entry, idx) => (
+          <div key={idx} className="flex gap-2 items-start">
+            <Select
+              value={entry.gateway}
+              onValueChange={(v) => {
+                const updated = [...form.deliver_entries];
+                updated[idx] = { gateway: v, channel: "" };
+                update("deliver_entries", updated);
+              }}
+            >
+              {selectOptions(entry.gateway, deliveryTargets.map(t => ({
+                value: t.id,
+                label: t.id === "local" ? "Local (save only)" : t.name,
+              })))}
+            </Select>
+            <Input
+              placeholder={deliveryTargets.find(t => t.id === entry.gateway)?.home_channel_id || "Custom channel ID (optional)"}
+              value={entry.channel}
+              onChange={(e) => {
+                const updated = [...form.deliver_entries];
+                updated[idx] = { ...entry, channel: e.target.value };
+                update("deliver_entries", updated);
+              }}
+              className="flex-1"
+            />
+            <Button
+              type="button"
+              ghost
+              size="icon"
+              onClick={() => {
+                if (form.deliver_entries.length <= 1) return;
+                const updated = form.deliver_entries.filter((_, i) => i !== idx);
+                update("deliver_entries", updated);
+              }}
+              disabled={form.deliver_entries.length <= 1}
+              title="Remove delivery target"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        ))}
+        
+        {/* Add button */}
+        <Button
+          type="button"
+          outlined
+          size="sm"
+          className="self-start"
+          onClick={() => {
+            const available = deliveryTargets.filter(t => t.id !== "local");
+            const nextGateway = available.length > 0 ? available[0].id : "local";
+            update("deliver_entries", [...form.deliver_entries, { gateway: nextGateway, channel: "" }]);
+          }}
         >
-          {deliveryOptions}
-        </Select>
-        {onlyLocalAvailable && (
-          <p className="text-xs text-muted-foreground">
-            {t.cron.delivery.noneConfigured ??
-              "No messaging platforms configured. Set one up under Channels to deliver reports."}
-          </p>
-        )}
+          <Plus className="h-4 w-4 mr-1" /> Add delivery target
+        </Button>
       </div>
 
       <div className="grid gap-2">
