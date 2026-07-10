@@ -14,8 +14,7 @@ function form(overrides: Partial<CronJobFormState> = {}): CronJobFormState {
     name: "",
     prompt: "prompt",
     schedule: "every 1h",
-    deliver: "local",
-    deliver_custom_channel: "",
+    deliver_entries: [{ gateway: "local", channel: "" }],
     skills: [],
     provider: "",
     model: "",
@@ -71,6 +70,30 @@ describe("buildCronJobPayload", () => {
       workdir: null,
     });
   });
+
+  it("builds deliver string from deliver_entries", () => {
+    const payload = buildCronJobPayload(
+      form({
+        deliver_entries: [
+          { gateway: "telegram", channel: "123" },
+          { gateway: "discord", channel: "456" },
+          { gateway: "local", channel: "" },
+        ],
+      }),
+    );
+    expect(payload.deliver).toBe("telegram:123,discord:456,local");
+  });
+
+  it("builds deliver string with @profile suffix from deliver_entries", () => {
+    const payload = buildCronJobPayload(
+      form({
+        deliver_entries: [
+          { gateway: "discord@hermesta", channel: "channel_id" },
+        ],
+      }),
+    );
+    expect(payload.deliver).toBe("discord@hermesta:channel_id");
+  });
 });
 
 describe("cronJobHasExecutionContent", () => {
@@ -119,6 +142,47 @@ describe("cronJobFormFromJob", () => {
 
     expect(cronJobFormFromJob(job)).toMatchObject({
       schedule: "2026-02-03T14:00:00+08:00",
+    });
+  });
+
+  it("parses deliver string into deliver_entries", () => {
+    const job: CronJob = {
+      id: "abc",
+      enabled: true,
+      deliver: "telegram:123,discord:456,local",
+    };
+    expect(cronJobFormFromJob(job)).toMatchObject({
+      deliver_entries: [
+        { gateway: "telegram", channel: "123" },
+        { gateway: "discord", channel: "456" },
+        { gateway: "local", channel: "" },
+      ],
+    });
+  });
+
+  it("handles empty or simple local deliver target in parsing", () => {
+    const job: CronJob = {
+      id: "abc",
+      enabled: true,
+      deliver: "local",
+    };
+    expect(cronJobFormFromJob(job)).toMatchObject({
+      deliver_entries: [
+        { gateway: "local", channel: "" },
+      ],
+    });
+  });
+
+  it("parses deliver string with @profile suffix into deliver_entries", () => {
+    const job: CronJob = {
+      id: "abc",
+      enabled: true,
+      deliver: "discord@hermesta:channel_id",
+    };
+    expect(cronJobFormFromJob(job)).toMatchObject({
+      deliver_entries: [
+        { gateway: "discord@hermesta", channel: "channel_id" },
+      ],
     });
   });
 });

@@ -2163,6 +2163,7 @@ export interface CronDeliveryTarget {
   name: string;
   home_target_set: boolean;
   home_env_var: string | null;
+  profile?: string | null;
   home_channel_id?: string | null;
 }
 
