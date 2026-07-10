@@ -8650,7 +8650,7 @@ async def create_cron_job(body: CronJobCreate, profile: str = "default"):
 
 
 @app.get("/api/cron/delivery-targets")
-async def get_cron_delivery_targets():
+async def get_cron_delivery_targets(profile: str | None = None):
     """Delivery targets the cron dropdown should offer.
 
     Always includes the implicit ``local`` option. Beyond that, the list is
@@ -8659,6 +8659,10 @@ async def get_cron_delivery_targets():
     configured platform that hasn't set its cron home channel is still returned
     with ``home_target_set: false`` so the UI can surface it as "configure a
     home channel first" rather than hiding it.
+
+    Accepts an optional ``?profile=`` query param to scope targets to a
+    specific profile's connected platforms. Pass ``?profile=all`` to aggregate
+    across every available profile. Defaults to the default profile.
     """
     targets = [
         {
@@ -8671,7 +8675,7 @@ async def get_cron_delivery_targets():
     try:
         from cron.scheduler import cron_delivery_targets
 
-        targets.extend(cron_delivery_targets())
+        targets.extend(cron_delivery_targets(profile=profile))
     except Exception:
         _log.exception("GET /api/cron/delivery-targets failed")
     return {"targets": targets}
@@ -8857,12 +8861,16 @@ class AutomationBlueprintInstantiate(BaseModel):
 
 
 @app.get("/api/cron/blueprints")
-async def list_cron_blueprints():
+async def list_cron_blueprints(profile: str | None = None):
     """Return the blueprint catalog as form schemas for the dashboard gallery.
 
     The ``deliver`` slot's options are rewritten from the user's actually
     configured gateway platforms (plus the universal origin/local/all), so the
     form never offers a platform that isn't connected.
+
+    Accepts an optional ``?profile=`` param to scope platforms to a specific
+    profile's connected platforms. Pass ``?profile=all`` to aggregate across
+    all profiles.
     """
     try:
         from cron.blueprint_catalog import CATALOG, blueprint_catalog_entry
@@ -8871,7 +8879,7 @@ async def list_cron_blueprints():
         try:
             from cron.scheduler import cron_delivery_targets
 
-            platforms = [t["id"] for t in cron_delivery_targets() if t.get("id")]
+            platforms = [t["id"] for t in cron_delivery_targets(profile=profile) if t.get("id")]
             deliver_options = ["origin", "local", *platforms]
         except Exception:
             _log.debug("cron_delivery_targets unavailable; using static deliver options", exc_info=True)
@@ -11960,6 +11968,7 @@ async def get_toolsets(profile: Optional[str] = None):
     from hermes_cli.tools_config import (
         _get_effective_configurable_toolsets,
         _get_platform_tools,
+        _toolset_allowed_for_platform,
         _toolset_has_keys,
         gui_toolset_label,
     )
@@ -11974,6 +11983,11 @@ async def get_toolsets(profile: Optional[str] = None):
         )
     result = []
     for name, label, desc in _get_effective_configurable_toolsets():
+        # Skip toolsets that are platform-restricted and can't be toggled
+        # for the cli platform — showing a toggle button that silently does
+        # nothing is worse than showing nothing at all.
+        if not _toolset_allowed_for_platform(name, "cli"):
+            continue
         try:
             tools = sorted(set(resolve_toolset(name)))
         except Exception:

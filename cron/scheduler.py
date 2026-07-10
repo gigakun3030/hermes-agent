@@ -81,6 +81,13 @@ def _summarize_cron_failure_for_delivery(job: dict, error: str | None) -> str:
     # Match authentication/authorization wording at a word boundary and the
     # 401/403 status codes as whole tokens, so "oauth", "4015" and similar do
     # not trip a misleading auth message.
+    # Model-not-found must be checked BEFORE the 401 auth catch-all — some
+    # providers (OpenCode Zen) misuse HTTP 401 for "model not supported".
+    if re.search(r"model\s+\S+\s+is\s+not\s+supported|is\s+not\s+a\s+supported\s+model", lower):
+        return (
+            f"⚠️ Cron '{job_name}' failed: model not supported by provider. "
+            "Full details saved in cron output."
+        )
     if re.search(r"authenticat|authoriz", lower) or re.search(r"\b(401|403)\b", text):
         return (
             f"⚠️ Cron '{job_name}' failed: provider authentication error. "
@@ -923,7 +930,7 @@ def _iter_home_target_platforms():
         pass
 
 
-def cron_delivery_targets() -> list[dict]:
+def cron_delivery_targets(profile: Optional[str] = None) -> list[dict]:
     """Return the platforms a cron job can auto-deliver to.
 
     Single source of truth for any UI (dashboard dropdown, etc.) that lets a
@@ -933,16 +940,62 @@ def cron_delivery_targets() -> list[dict]:
     room/channel cron posts to) is set — a platform can be configured for
     interactive use but still lack the home target an unattended cron job needs.
 
+    When *profile* is specified, loads that profile's gateway config to
+    determine which platforms are connected (instead of the default profile).
+    Pass ``"all"`` to aggregate platforms across every available profile.
+
     Returns a list of dicts: ``{"id", "name", "home_target_set", "home_env_var"}``
     ordered by the gateway's canonical platform order. Callers should always
     prepend the implicit ``local`` option themselves — it needs no config.
     """
     targets: list[dict] = []
-    try:
-        from gateway.config import load_gateway_config
 
-        gateway_config = load_gateway_config()
-        connected = {p.value for p in gateway_config.get_connected_platforms()}
+    def _load_for_home(home_path: Path) -> set[str]:
+        """Load connected platforms from a specific Hermes home directory."""
+        try:
+            from hermes_constants import (
+                set_hermes_home_override,
+                reset_hermes_home_override,
+            )
+
+            token = set_hermes_home_override(home_path)
+            try:
+                from gateway.config import load_gateway_config
+
+                gw = load_gateway_config()
+                return {p.value for p in gw.get_connected_platforms()}
+            finally:
+                reset_hermes_home_override(token)
+        except Exception:
+            logger.debug(
+                "cron_delivery_targets: gateway config unavailable for %s",
+                home_path,
+                exc_info=True,
+            )
+            return set()
+
+    try:
+        if profile and profile != "default":
+            from hermes_cli import profiles as profiles_mod
+
+            if profile == "all":
+                profile_list = list(profiles_mod.list_profiles())
+                connected: set[str] = set()
+                for p in profile_list:
+                    home = profiles_mod.get_profile_dir(p.name)
+                    connected |= _load_for_home(home)
+            else:
+                canon = profiles_mod.normalize_profile_name(profile)
+                profiles_mod.validate_profile_name(canon)
+                if not profiles_mod.profile_exists(canon):
+                    return []
+                home = profiles_mod.get_profile_dir(canon)
+                connected = _load_for_home(home)
+        else:
+            from gateway.config import load_gateway_config
+
+            gateway_config = load_gateway_config()
+            connected = {p.value for p in gateway_config.get_connected_platforms()}
     except Exception:
         logger.debug("cron_delivery_targets: gateway config unavailable", exc_info=True)
         connected = set()
@@ -959,6 +1012,7 @@ def cron_delivery_targets() -> list[dict]:
                 "name": name.replace("_", " ").title(),
                 "home_target_set": bool(_get_home_target_chat_id(name)),
                 "home_env_var": env_var or None,
+                "home_channel_id": _get_home_target_chat_id(name) or None,
             }
         )
     return targets
