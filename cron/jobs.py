@@ -865,6 +865,7 @@ def create_job(
     workdir: Optional[str] = None,
     no_agent: bool = False,
     attach_to_session: Optional[bool] = None,
+    model_fallback: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Create a new cron job.
@@ -942,6 +943,18 @@ def create_job(
     normalized_no_agent = bool(no_agent)
     normalized_attach = attach_to_session if isinstance(attach_to_session, bool) else None
 
+    # Normalize model_fallback: strip for no_agent, validate structure otherwise
+    normalized_model_fallback = None
+    if not normalized_no_agent and model_fallback and isinstance(model_fallback, dict):
+        fb_type = model_fallback.get("type")
+        if fb_type in ("model_switch", "retry_interval"):
+            fb_models = [str(m).strip() for m in model_fallback.get("models") or [] if str(m).strip()]
+            normalized_model_fallback = {
+                "type": fb_type,
+                "models": fb_models if fb_type == "model_switch" else [],
+                "retry_interval_seconds": int(model_fallback.get("retry_interval_seconds") or 300) if fb_type == "retry_interval" else None,
+            }
+
     # no_agent jobs are meaningless without a script — the script IS the job.
     # Surface this as a clear ValueError at create time so bad configs never
     # reach the scheduler.
@@ -1016,6 +1029,7 @@ def create_job(
         "origin": origin,  # Tracks where job was created for "origin" delivery
         "enabled_toolsets": normalized_toolsets,
         "workdir": normalized_workdir,
+        "model_fallback": normalized_model_fallback,
     }
     # Only persist attach_to_session when explicitly set, so existing jobs and
     # the common case stay byte-identical (absent key => fall back to the
@@ -1111,6 +1125,26 @@ def update_job(job_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]
                     updates["workdir"] = None
                 else:
                     updates["workdir"] = _normalize_workdir(_wd)
+
+            # If no_agent is being set to True, strip model_fallback
+            if updates.get("no_agent") is True:
+                updates["model_fallback"] = None
+            # Normalize model_fallback if present in updates
+            if "model_fallback" in updates:
+                _raw_fb = updates["model_fallback"]
+                if not _raw_fb or not isinstance(_raw_fb, dict):
+                    updates["model_fallback"] = None
+                else:
+                    _fb_type = _raw_fb.get("type")
+                    if _fb_type in ("model_switch", "retry_interval"):
+                        _fb_models = [str(m).strip() for m in _raw_fb.get("models") or [] if str(m).strip()]
+                        updates["model_fallback"] = {
+                            "type": _fb_type,
+                            "models": _fb_models if _fb_type == "model_switch" else [],
+                            "retry_interval_seconds": int(_raw_fb.get("retry_interval_seconds") or 300) if _fb_type == "retry_interval" else None,
+                        }
+                    else:
+                        updates["model_fallback"] = None
 
             previous_inference_axes = _normalized_inference_axes(job)
             updated = _apply_skill_fields({**job, **updates})
@@ -1234,7 +1268,8 @@ def remove_job(job_id: str) -> bool:
 
 
 def mark_job_run(job_id: str, success: bool, error: Optional[str] = None,
-                 delivery_error: Optional[str] = None):
+                 delivery_error: Optional[str] = None,
+                 is_model_error: bool = False):
     """
     Mark a job as having been run.
     
@@ -1286,7 +1321,22 @@ def mark_job_run(job_id: str, success: bool, error: Optional[str] = None,
                         return
                 
                 # Compute next run
-                job["next_run_at"] = compute_next_run(job["schedule"], now)
+                if not success and is_model_error:
+                    _mf = job.get("model_fallback") or {}
+                    if _mf.get("type") == "retry_interval":
+                        _retry_secs = int(_mf.get("retry_interval_seconds") or 300)
+                        from datetime import timedelta
+                        job["next_run_at"] = (_hermes_now() + timedelta(seconds=_retry_secs)).isoformat()
+                        logger.info(
+                            "Job '%s': retry_interval=%ds, rescheduled for %s",
+                            job.get("name", job["id"]),
+                            _retry_secs,
+                            job["next_run_at"],
+                        )
+                    else:
+                        job["next_run_at"] = compute_next_run(job["schedule"], now)
+                else:
+                    job["next_run_at"] = compute_next_run(job["schedule"], now)
 
                 # If no next run, decide whether this is terminal completion
                 # (one-shot) or a transient failure (recurring schedule couldn't

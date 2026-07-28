@@ -19,6 +19,9 @@ export interface CronJobFormState {
   context_from: string;
   enabled_toolsets: string[];
   workdir: string;
+  model_fallback_type: '' | 'model_switch' | 'retry_interval';
+  model_fallback_models: string[];
+  model_fallback_interval: number;
 }
 
 /** Split a comma/newline list (or array) into trimmed, non-empty items. */
@@ -76,6 +79,11 @@ export function buildCronJobPayload(form: CronJobFormState): CronJobMutation {
     context_from: contextFrom.length > 0 ? contextFrom : null,
     enabled_toolsets: enabledToolsets.length > 0 ? enabledToolsets : null,
     workdir: optionalText(form.workdir),
+    model_fallback: form.no_agent || !form.model_fallback_type ? null : {
+      type: form.model_fallback_type,
+      models: form.model_fallback_type === 'model_switch' ? form.model_fallback_models.filter(Boolean) : [],
+      retry_interval_seconds: form.model_fallback_type === 'retry_interval' ? Number(form.model_fallback_interval) : undefined,
+    },
   };
 }
 
@@ -119,5 +127,8 @@ export function cronJobFormFromJob(job: CronJob): CronJobFormState {
     context_from: listToText(job.context_from),
     enabled_toolsets: splitCronList(job.enabled_toolsets),
     workdir: asString(job.workdir),
+    model_fallback_type: (job.model_fallback?.type as '' | 'model_switch' | 'retry_interval') || '',
+    model_fallback_models: job.model_fallback?.models || [],
+    model_fallback_interval: job.model_fallback?.retry_interval_seconds || 300,
   };
 }

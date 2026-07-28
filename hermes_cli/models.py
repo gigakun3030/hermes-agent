@@ -418,7 +418,6 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "minimax-m3",
         "minimax-m2.7",
         "minimax-m2.5",
-        "minimax-m3-free",
         "glm-5.2",
         "glm-5.1",
         "glm-5",
@@ -428,7 +427,6 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "deepseek-v4-flash-free",
         "qwen3.7-plus",
         "qwen3.6-plus",
-        "qwen3.6-plus-free",
         "qwen3.5-plus",
         "grok-build-0.1",
         "big-pickle",
@@ -1062,6 +1060,7 @@ CANONICAL_PROVIDERS: list[ProviderEntry] = [
     ProviderEntry("opencode-zen",   "OpenCode Zen",             "OpenCode Zen (Curated models, pay-as-you-go)"),
     ProviderEntry("opencode-go",    "OpenCode Go",              "OpenCode Go (Open models subscription)"),
     ProviderEntry("bedrock",        "AWS Bedrock",              "AWS Bedrock (Claude, Nova, Llama, DeepSeek; IAM or API key)"),
+    ProviderEntry("mistral",        "Mistral AI",               "Mistral AI (Large, Small, Codestral, Pixtral; direct API)"),
     ProviderEntry("azure-foundry",  "Azure Foundry",            "Azure Foundry (OpenAI-style or Anthropic-style endpoint, your Azure AI deployment)"),
     ProviderEntry("qwen-oauth",     "Qwen OAuth (Portal)",      "Qwen OAuth (Reuses local Qwen CLI login)"),
 ]

@@ -2971,7 +2971,51 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
                 f"(or pin the original values to keep them). See #44585."
             )
 
-        fallback_model = get_fallback_chain(_cfg) or None
+        # Build combined fallback chain: per-job model_switch entries first,
+        # then global fallback_providers from config.yaml.
+        # Deduplicate against the primary (already-resolved) provider/model
+        # so we don't retry the same configuration that just failed.
+        _combined_fb: list[dict[str, Any]] = []
+        _seen_fb: set[tuple[str, str, str]] = set()
+        _primary_id = (
+            str(runtime.get("provider") or "").strip().lower(),
+            str(model or "").strip().lower(),
+            str(runtime.get("base_url") or "").strip().lower().rstrip("/"),
+        )
+        _seen_fb.add(_primary_id)
+        _model_fb_cfg = job.get("model_fallback") or {}
+        if _model_fb_cfg.get("type") == "model_switch":
+            _job_provider = str(job.get("provider") or runtime.get("provider") or "").strip()
+            _job_base_url = str(job.get("base_url") or runtime.get("base_url") or "").strip()
+            for _fb_model in _model_fb_cfg.get("models") or []:
+                _fb_model_str = str(_fb_model).strip()
+                if not _fb_model_str:
+                    continue
+                _entry = {
+                    "provider": _job_provider,
+                    "model": _fb_model_str,
+                    "base_url": _job_base_url,
+                }
+                _entry_id = (
+                    _job_provider.lower(),
+                    _fb_model_str.lower(),
+                    _job_base_url.lower().rstrip("/"),
+                )
+                if _entry_id not in _seen_fb:
+                    _seen_fb.add(_entry_id)
+                    _combined_fb.append(_entry)
+        # Append global fallback providers
+        _global_fb = get_fallback_chain(_cfg) or []
+        for _entry in _global_fb:
+            _entry_id = (
+                str(_entry.get("provider") or "").strip().lower(),
+                str(_entry.get("model") or "").strip().lower(),
+                str(_entry.get("base_url") or "").strip().lower().rstrip("/"),
+            )
+            if _entry_id not in _seen_fb:
+                _seen_fb.add(_entry_id)
+                _combined_fb.append(dict(_entry))
+        fallback_model = _combined_fb or None
         credential_pool = None
         runtime_provider = str(runtime.get("provider") or "").strip().lower()
         if runtime_provider:
@@ -3295,6 +3339,36 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
             logger.debug("Job '%s': failed to reap stale auxiliary clients: %s", job_id, e)
 
 
+def _is_model_error(error: Optional[str]) -> bool:
+    """Check if a cron job error is model/API-related (vs script/config failures).
+
+    Uses the same heuristic patterns as _summarize_cron_failure_for_delivery.
+    """
+    if not error:
+        return False
+    text = str(error).strip()
+    lower = text.lower()
+    if "429" in text or "rate limit" in lower or "usage limit" in lower:
+        return True
+    if "readtimeout" in lower or "timed out" in lower or "timeout" in lower:
+        return True
+    if re.search(r"model\s+\S+\s+is\s+not\s+supported|is\s+not\s+a\s+supported\s+model", lower):
+        return True
+    if "model not found" in lower or "model_not_found" in lower:
+        return True
+    if "context length" in lower or "context_overflow" in lower or "maximum context length" in lower:
+        return True
+    if "billing" in lower or "insufficient_quota" in lower or "quota" in lower:
+        return True
+    if "server error" in lower or "502" in text or "503" in text or "504" in text:
+        return True
+    if "overloaded" in lower or "service_unavailable" in lower:
+        return True
+    if "empty response" in lower and ("model" in lower or "timeout" in lower):
+        return True
+    return False
+
+
 def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -> bool:
     """Run ONE due job end-to-end: execute → save output → deliver → mark.
 
@@ -3383,12 +3457,12 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
             success = False
             error = "Agent completed but produced empty response (model error, timeout, or misconfiguration)"
 
-        mark_job_run(job["id"], success, error, delivery_error=delivery_error)
+        mark_job_run(job["id"], success, error, delivery_error=delivery_error, is_model_error=_is_model_error(error))
         return True
 
     except Exception as e:
         logger.error("Error processing job %s: %s", job['id'], e)
-        mark_job_run(job["id"], False, str(e))
+        mark_job_run(job["id"], False, str(e), is_model_error=_is_model_error(str(e)))
         return False
 
 

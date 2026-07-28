@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { Clock, Pause, Pencil, Play, Plus, Trash2, X, Zap } from "lucide-react";
 import { Badge } from "@nous-research/ui/ui/components/badge";
 import { Button } from "@nous-research/ui/ui/components/button";
@@ -159,6 +159,9 @@ function emptyCronJobForm(): CronJobEditorState {
     context_from: "",
     enabled_toolsets: [],
     workdir: "",
+    model_fallback_type: "",
+    model_fallback_models: [],
+    model_fallback_interval: 300,
     scheduleState: { ...DEFAULT_SCHEDULE_STATE },
   };
 }
@@ -272,37 +275,6 @@ function CronAdvancedFields({
           />
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
-            <input
-              type="checkbox"
-              className="accent-foreground"
-              checked={form.no_agent}
-              onChange={(e) => update("no_agent", e.target.checked)}
-            />
-            no_agent: run the script only and deliver stdout verbatim
-          </label>
-          <div className="grid gap-1">
-            <Label htmlFor={`${idPrefix}-script`}>Script</Label>
-            <Input
-              id={`${idPrefix}-script`}
-              value={form.script}
-              onChange={(e) => update("script", e.target.value)}
-              placeholder="relative/path/in/scripts"
-            />
-          </div>
-        </div>
-
-        <div className="grid gap-1">
-          <Label htmlFor={`${idPrefix}-workdir`}>Workdir</Label>
-          <Input
-            id={`${idPrefix}-workdir`}
-            value={form.workdir}
-            onChange={(e) => update("workdir", e.target.value)}
-            placeholder="/absolute/project/path"
-          />
-        </div>
-
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="grid gap-1">
             <Label htmlFor={`${idPrefix}-context-from`}>context_from job IDs</Label>
@@ -353,6 +325,12 @@ function CronJobFormFields({
   ) => {
     onChange({ ...form, [key]: next });
   };
+  const allModels = useMemo(() => {
+    if (!modelOptions?.providers) return [];
+    return modelOptions.providers
+      .filter((p) => p.authenticated !== false)
+      .flatMap((p) => p.models ?? []);
+  }, [modelOptions]);
   return (
     <>
       <div className="grid gap-2">
@@ -366,6 +344,7 @@ function CronJobFormFields({
         />
       </div>
 
+      {!form.no_agent && (
       <div className="grid gap-2">
         <Label htmlFor={`${idPrefix}-prompt`}>{t.cron.prompt}</Label>
         <textarea
@@ -376,6 +355,7 @@ function CronJobFormFields({
           onChange={(e) => update("prompt", e.target.value)}
         />
       </div>
+      )}
 
       <ScheduleBuilder
         value={form.scheduleState}
@@ -395,6 +375,7 @@ function CronJobFormFields({
                 updated[idx] = { gateway: v, channel: "" };
                 update("deliver_entries", updated);
               }}
+              className="min-w-[200px]"
             >
               {selectOptions(entry.gateway, deliveryTargets.map(t => ({
                 value: getTargetGatewayKey(t),
@@ -444,6 +425,27 @@ function CronJobFormFields({
         </Button>
       </div>
 
+      <div className="grid gap-1">
+        <Label htmlFor={`${idPrefix}-script`}>Script</Label>
+        <Input
+          id={`${idPrefix}-script`}
+          value={form.script}
+          onChange={(e) => update("script", e.target.value)}
+          placeholder="relative/path/in/scripts"
+        />
+      </div>
+
+      <div className="grid gap-1">
+        <Label htmlFor={`${idPrefix}-workdir`}>Workdir</Label>
+        <Input
+          id={`${idPrefix}-workdir`}
+          value={form.workdir}
+          onChange={(e) => update("workdir", e.target.value)}
+          placeholder="/absolute/project/path"
+        />
+      </div>
+
+      {!form.no_agent && (
       <div className="grid gap-2">
         <Label htmlFor={`${idPrefix}-skills`}>Skills (optional)</Label>
         <NameCheckboxPicker
@@ -458,7 +460,9 @@ function CronJobFormFields({
           sets when, the skill sets how.
         </p>
       </div>
+      )}
 
+      {!form.no_agent && (
       <CronAdvancedFields
         idPrefix={`${idPrefix}-advanced`}
         form={form}
@@ -466,6 +470,91 @@ function CronJobFormFields({
         modelOptions={modelOptions}
         availableToolsets={availableToolsets}
       />
+      )}
+
+      {!form.no_agent && (
+        <details className="border border-border bg-background/30 p-3 mt-3">
+          <summary className="cursor-pointer text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Fallback
+          </summary>
+          <div className="mt-3 grid gap-3">
+            <div className="grid gap-1">
+              <Label htmlFor={`${idPrefix}-fallback-type`}>Fallback Type</Label>
+              <Select
+                id={`${idPrefix}-fallback-type`}
+                value={form.model_fallback_type}
+                onValueChange={(v) => {
+                  update("model_fallback_type", v as "" | "model_switch" | "retry_interval");
+                }}
+              >
+                <SelectOption value="">None</SelectOption>
+                <SelectOption value="model_switch">Model Switch</SelectOption>
+                <SelectOption value="retry_interval">Retry Interval</SelectOption>
+              </Select>
+            </div>
+
+            {form.model_fallback_type === "model_switch" && (
+              <div className="grid gap-2">
+                <Label>Fallback Models</Label>
+                {form.model_fallback_models?.map((modelName, idx) => (
+                  <div key={idx} className="flex gap-2 items-start">
+                    <Select
+                      value={modelName}
+                      onValueChange={(v) => {
+                        const updated = [...form.model_fallback_models];
+                        updated[idx] = v;
+                        update("model_fallback_models", updated);
+                      }}
+                      className="flex-1"
+                    >
+                      <SelectOption value="">Select a model</SelectOption>
+                      {selectOptions(modelName, allModels.map(m => ({ value: m, label: m })))}
+                    </Select>
+                    <Button
+                      type="button"
+                      ghost
+                      size="icon"
+                      onClick={() => {
+                        const updated = form.model_fallback_models.filter((_, i) => i !== idx);
+                        update("model_fallback_models", updated);
+                      }}
+                      title="Remove model"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+                <Button
+                  type="button"
+                  outlined
+                  size="sm"
+                  className="self-start"
+                  onClick={() => {
+                    update("model_fallback_models", [...(form.model_fallback_models ?? []), ""]);
+                  }}
+                >
+                  <Plus className="h-4 w-4 mr-1" /> Add model
+                </Button>
+              </div>
+            )}
+
+            {form.model_fallback_type === "retry_interval" && (
+              <div className="grid gap-1">
+                <Label htmlFor={`${idPrefix}-fallback-interval`}>Retry interval (seconds)</Label>
+                <Input
+                  id={`${idPrefix}-fallback-interval`}
+                  type="number"
+                  value={form.model_fallback_interval != null ? String(form.model_fallback_interval) : "300"}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10);
+                    update("model_fallback_interval", Number.isNaN(val) ? 0 : val);
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        </details>
+      )}
     </>
   );
 }
@@ -546,6 +635,30 @@ function profileLabel(profile: string): string {
   return profile === "default" ? "default" : profile;
 }
 
+/** Check if a job's deliver value has a valid cross-profile delivery target
+ *  (platform with home_channel_id set on any profile). Suppresses stale
+ *  "platform not configured" errors when the gateway IS configured. */
+function _deliveryHasValidTarget(job: CronJob, targets: CronDeliveryTarget[]): boolean {
+  const raw = typeof job.deliver === "string" ? job.deliver : "";
+  // Extract platform names from deliver value (strip channel and @profile)
+  const parts = raw.split(",").map(p => p.trim()).filter(Boolean);
+  for (const part of parts) {
+    const atIdx = part.indexOf("@");
+    const colonIdx = part.indexOf(":");
+    let platform = part;
+    if (atIdx !== -1 && (colonIdx === -1 || atIdx < colonIdx)) {
+      platform = part.substring(0, atIdx);
+    } else if (colonIdx !== -1) {
+      platform = part.substring(0, colonIdx);
+    }
+    platform = platform.trim().toLowerCase();
+    // Check if any target has this platform with a home_channel_id
+    const hasChannel = targets.some(t => t.id === platform && !!t.home_channel_id);
+    if (hasChannel) return true;
+  }
+  return false;
+}
+
 const STATUS_TONE: Record<string, "success" | "warning" | "destructive"> = {
   enabled: "success",
   scheduled: "success",
@@ -624,11 +737,18 @@ export default function CronPage() {
 
   const loadJobs = useCallback(() => {
     api
-      .getCronJobs(selectedProfile)
+      .getCronJobs("all")
       .then(setJobs)
       .catch(() => showToast(t.common.loading, "error"))
       .finally(() => setLoading(false));
-  }, [selectedProfile, showToast, t.common.loading]);
+  }, [showToast, t.common.loading]);
+
+  // Filter jobs based on selected agent filter
+  const filteredJobs = useMemo(() => {
+    if (selectedProfile === "all") return jobs;
+    if (selectedProfile === "none") return jobs.filter(j => j.no_agent);
+    return jobs.filter(j => !j.no_agent && (j.profile_name === selectedProfile || j.profile === selectedProfile));
+  }, [jobs, selectedProfile]);
 
   useEffect(() => {
     api
@@ -888,12 +1008,20 @@ export default function CronPage() {
 
             <div className="min-h-0 overflow-y-auto p-5 grid gap-4">
               <div className="grid gap-2">
-                <Label htmlFor="cron-profile">Profile</Label>
+                <Label htmlFor="cron-profile">Agent</Label>
                 <Select
                   id="cron-profile"
                   value={createProfile}
-                  onValueChange={(v) => setCreateProfile(v)}
+                  onValueChange={(v) => {
+                    if (v === "none") {
+                      setCreateForm(prev => ({ ...prev, no_agent: true }));
+                    } else {
+                      setCreateForm(prev => ({ ...prev, no_agent: false }));
+                    }
+                    setCreateProfile(v === "none" ? "default" : v);
+                  }}
                 >
+                  <SelectOption value="none">None (no agent)</SelectOption>
                   {profiles.map((profile) => (
                     <SelectOption key={profile.name} value={profile.name}>
                       {profileLabel(profile.name)}
@@ -962,6 +1090,27 @@ export default function CronPage() {
             </header>
 
             <div className="min-h-0 overflow-y-auto p-5 grid gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="edit-cron-profile">Agent</Label>
+                <Select
+                  id="edit-cron-profile"
+                  value={editJob?.no_agent ? "none" : (getJobProfile(editJob))}
+                  onValueChange={(v) => {
+                    if (v === "none") {
+                      setEditForm(prev => ({ ...prev, no_agent: true }));
+                    } else {
+                      setEditForm(prev => ({ ...prev, no_agent: false }));
+                    }
+                  }}
+                >
+                  <SelectOption value="none">None (no agent)</SelectOption>
+                  {profiles.map((profile) => (
+                    <SelectOption key={profile.name} value={profile.name}>
+                      {profileLabel(profile.name)}
+                    </SelectOption>
+                  ))}
+                </Select>
+              </div>
               <CronJobFormFields
                 idPrefix="edit-cron"
                 autoFocus
@@ -1002,17 +1151,18 @@ export default function CronPage() {
             className="flex items-center gap-2 text-muted-foreground"
           >
             <Clock className="h-4 w-4" />
-            {t.cron.scheduledJobs} ({jobs.length})
+            {t.cron.scheduledJobs} ({filteredJobs.length})
           </H2>
 
           <div className="grid gap-1 min-w-[220px]">
-            <Label htmlFor="cron-profile-filter">Profile</Label>
+            <Label htmlFor="cron-profile-filter">Agent</Label>
             <Select
               id="cron-profile-filter"
               value={selectedProfile}
               onValueChange={(v) => setSelectedProfile(v)}
             >
-              <SelectOption value="all">All profiles</SelectOption>
+              <SelectOption value="all">All agents</SelectOption>
+              <SelectOption value="none">None (no agent)</SelectOption>
               {profiles.map((profile) => (
                 <SelectOption key={profile.name} value={profile.name}>
                   {profileLabel(profile.name)}
@@ -1022,7 +1172,7 @@ export default function CronPage() {
           </div>
         </div>
 
-        {jobs.length === 0 && (
+        {filteredJobs.length === 0 && (
           <Card>
             <CardContent className="py-8 text-center text-sm text-muted-foreground">
               {t.cron.noJobs}
@@ -1030,7 +1180,7 @@ export default function CronPage() {
           </Card>
         )}
 
-        {jobs.map((job) => {
+        {filteredJobs.map((job) => {
           const state = getJobState(job);
           const promptText = getJobPrompt(job);
           const title = getJobTitle(job);
@@ -1097,7 +1247,7 @@ export default function CronPage() {
                       {t.cron.next}: {formatTime(job.next_run_at)}
                     </span>
                   </div>
-                  {job.last_delivery_error && (
+                  {job.last_delivery_error && !_deliveryHasValidTarget(job, deliveryTargets) && (
                     <p className="text-xs text-destructive mt-1">
                       delivery: {job.last_delivery_error}
                     </p>

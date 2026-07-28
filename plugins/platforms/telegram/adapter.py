@@ -84,6 +84,13 @@ async def _await_with_thread_deadline(awaitable, timeout: float, *, on_abandon=N
             cleanup = asyncio.ensure_future(_run_abandon_cleanup(on_abandon))
             cleanup.add_done_callback(_consume_abandoned_task)
         raise asyncio.TimeoutError()
+    except asyncio.CancelledError:
+        task.cancel()
+        task.add_done_callback(_consume_abandoned_task)
+        if on_abandon is not None:
+            cleanup = asyncio.ensure_future(_run_abandon_cleanup(on_abandon))
+            cleanup.add_done_callback(_consume_abandoned_task)
+        raise
     finally:
         timer.cancel()
 
@@ -3013,15 +3020,18 @@ class TelegramAdapter(BasePlatformAdapter):
                 return kwargs
 
             disable_fallback = (os.getenv("HERMES_TELEGRAM_DISABLE_FALLBACK_IPS", "").strip().lower() in {"1", "true", "yes", "on"})
-            fallback_ips = self._fallback_ips()
-            if not fallback_ips:
-                logger.warning("[%s] Discovering Telegram API fallback IPs via DNS-over-HTTPS…", self.name)
-                fallback_ips = await discover_fallback_ips()
-                logger.info(
-                    "[%s] Auto-discovered Telegram fallback IPs: %s",
-                    self.name,
-                    ", ".join(fallback_ips),
-                )
+            if disable_fallback:
+                fallback_ips = []
+            else:
+                fallback_ips = self._fallback_ips()
+                if not fallback_ips:
+                    logger.warning("[%s] Discovering Telegram API fallback IPs via DNS-over-HTTPS…", self.name)
+                    fallback_ips = await discover_fallback_ips()
+                    logger.info(
+                        "[%s] Auto-discovered Telegram fallback IPs: %s",
+                        self.name,
+                        ", ".join(fallback_ips),
+                    )
 
             proxy_targets = ["api.telegram.org", *fallback_ips]
             proxy_url = resolve_proxy_url("TELEGRAM_PROXY", target_hosts=proxy_targets)
@@ -3093,23 +3103,16 @@ class TelegramAdapter(BasePlatformAdapter):
             except ImportError:
                 NetworkError = TimedOut = OSError  # type: ignore[misc,assignment]
             _max_connect = 8
-            _init_timeout = _env_float("HERMES_TELEGRAM_INIT_TIMEOUT", 30.0)
+            _init_timeout = _env_float("HERMES_TELEGRAM_INIT_TIMEOUT", 15.0)
             for _attempt in range(_max_connect):
                 try:
                     logger.warning(
                         "[%s] Connecting to Telegram (attempt %d/%d)…",
                         self.name, _attempt + 1, _max_connect,
                     )
-                    await _await_with_thread_deadline(
+                    await asyncio.wait_for(
                         self._app.initialize(),
                         timeout=_init_timeout,
-                        # On timeout the initialize() task is abandoned without
-                        # awaiting its cancellation (it may be wedged in a
-                        # shielded scope). Best-effort release the half-built
-                        # app's httpx client/connection pool so it isn't leaked
-                        # across the retry ladder (mirrors the client-close-on-
-                        # timeout pattern in agent/auxiliary_client.py).
-                        on_abandon=lambda app=self._app: _shutdown_abandoned_app(app),
                     )
                     break
                 except asyncio.TimeoutError:
@@ -3119,6 +3122,25 @@ class TelegramAdapter(BasePlatformAdapter):
                             "[%s] Connect attempt %d/%d timed out after %.0fs — retrying in %ds",
                             self.name, _attempt + 1, _max_connect, _init_timeout, wait,
                         )
+                        self._app = builder.build()
+                        self._bot = self._app.bot
+                        self._app.add_handler(TelegramMessageHandler(
+                            filters.TEXT & ~filters.COMMAND,
+                            self._handle_text_message
+                        ))
+                        self._app.add_handler(TelegramMessageHandler(
+                            filters.COMMAND,
+                            self._handle_command
+                        ))
+                        self._app.add_handler(TelegramMessageHandler(
+                            filters.LOCATION | getattr(filters, "VENUE", filters.LOCATION),
+                            self._handle_location_message
+                        ))
+                        self._app.add_handler(TelegramMessageHandler(
+                            filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.VOICE | filters.Document.ALL | filters.Sticker.ALL,
+                            self._handle_media_message
+                        ))
+                        self._app.add_handler(CallbackQueryHandler(self._handle_callback_query))
                         await asyncio.sleep(wait)
                     else:
                         raise OSError(
@@ -3133,6 +3155,25 @@ class TelegramAdapter(BasePlatformAdapter):
                             "[%s] Connect attempt %d/%d failed: %s — retrying in %ds",
                             self.name, _attempt + 1, _max_connect, init_err, wait,
                         )
+                        self._app = builder.build()
+                        self._bot = self._app.bot
+                        self._app.add_handler(TelegramMessageHandler(
+                            filters.TEXT & ~filters.COMMAND,
+                            self._handle_text_message
+                        ))
+                        self._app.add_handler(TelegramMessageHandler(
+                            filters.COMMAND,
+                            self._handle_command
+                        ))
+                        self._app.add_handler(TelegramMessageHandler(
+                            filters.LOCATION | getattr(filters, "VENUE", filters.LOCATION),
+                            self._handle_location_message
+                        ))
+                        self._app.add_handler(TelegramMessageHandler(
+                            filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.VOICE | filters.Document.ALL | filters.Sticker.ALL,
+                            self._handle_media_message
+                        ))
+                        self._app.add_handler(CallbackQueryHandler(self._handle_callback_query))
                         await asyncio.sleep(wait)
                     else:
                         raise

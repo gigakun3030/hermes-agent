@@ -800,6 +800,11 @@ def run_conversation(
                     _base = api_msg.get("content", "")
                     if isinstance(_base, str):
                         api_msg["content"] = _base + "\n\n" + "\n\n".join(_injections)
+                    elif isinstance(_base, list):
+                        # Avoid mutating the original message content list
+                        _base_copy = list(_base)
+                        _base_copy.append({"type": "text", "text": "\n\n".join(_injections)})
+                        api_msg["content"] = _base_copy
 
             # For ALL assistant messages, pass reasoning back to the API
             # This ensures multi-turn reasoning context is preserved

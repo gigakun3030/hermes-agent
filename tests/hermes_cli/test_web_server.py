@@ -1399,6 +1399,7 @@ class TestWebServerEndpoints:
         assert "local" in targets
         assert "matrix" in targets
         assert targets["matrix"]["home_target_set"] is True
+        assert targets["matrix"]["home_channel_id"] == "!room:matrix.org"
         # No hardcoded telegram/discord/slack/email when they aren't configured.
         assert "telegram" not in targets
 

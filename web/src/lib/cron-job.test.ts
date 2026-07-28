@@ -24,6 +24,9 @@ function form(overrides: Partial<CronJobFormState> = {}): CronJobFormState {
     context_from: "",
     enabled_toolsets: [],
     workdir: "",
+    model_fallback_type: "",
+    model_fallback_models: [],
+    model_fallback_interval: 300,
     ...overrides,
   };
 }

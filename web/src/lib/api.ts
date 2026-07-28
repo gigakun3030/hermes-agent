@@ -2112,6 +2112,12 @@ export interface CronJobRepeat {
   completed?: number;
 }
 
+export interface CronJobModelFallback {
+  type: 'model_switch' | 'retry_interval';
+  models?: string[];
+  retry_interval_seconds?: number;
+}
+
 export interface CronJobMutation {
   name?: string;
   prompt?: string;
@@ -2126,6 +2132,7 @@ export interface CronJobMutation {
   context_from?: string[] | null;
   enabled_toolsets?: string[] | null;
   workdir?: string | null;
+  model_fallback?: CronJobModelFallback | null;
 }
 
 export interface CronJob {
@@ -2156,6 +2163,7 @@ export interface CronJob {
   last_status?: string | null;
   last_error?: string | null;
   last_delivery_error?: string | null;
+  model_fallback?: CronJobModelFallback | null;
 }
 
 export interface CronDeliveryTarget {
