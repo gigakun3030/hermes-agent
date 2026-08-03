@@ -533,8 +533,10 @@ export const api = {
   // Cron jobs
   getCronJobs: (profile = "all") =>
     fetchJSON<CronJob[]>(`/api/cron/jobs?profile=${encodeURIComponent(profile)}`),
-  getCronDeliveryTargets: () =>
-    fetchJSON<{ targets: CronDeliveryTarget[] }>("/api/cron/delivery-targets"),
+  getCronDeliveryTargets: (profile?: string) =>
+    fetchJSON<{ targets: CronDeliveryTarget[] }>(
+      appendProfileParam("/api/cron/delivery-targets", profile),
+    ),
   createCronJob: (job: CronJobMutation, profile = "default") =>
     fetchJSON<CronJob>(`/api/cron/jobs?profile=${encodeURIComponent(profile)}`, {
       method: "POST",
@@ -1981,6 +1983,11 @@ export interface CronJobMutation {
   no_agent?: boolean;
   context_from?: string[] | null;
   enabled_toolsets?: string[] | null;
+  model_fallback?: {
+    type: string;
+    models: string[];
+    retry_interval_seconds?: number;
+  } | null;
   workdir?: string | null;
 }
 
@@ -2006,6 +2013,11 @@ export interface CronJob {
   no_agent?: boolean | null;
   context_from?: string[] | string | null;
   enabled_toolsets?: string[] | null;
+  model_fallback?: {
+    type: string;
+    models: string[];
+    retry_interval_seconds?: number;
+  } | null;
   workdir?: string | null;
   last_run_at?: string | null;
   next_run_at?: string | null;
@@ -2019,6 +2031,8 @@ export interface CronDeliveryTarget {
   name: string;
   home_target_set: boolean;
   home_env_var: string | null;
+  profile?: string | null;
+  home_channel_id?: string | null;
 }
 
 export interface AutomationBlueprintField {
